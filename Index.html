@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Basketball Rotation Tracker</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#f3f4f6;color:#111827;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+header{background:#111827;color:white;padding:18px 15px}
+h1{font-size:20px;margin:0}
+main{max-width:650px;margin:auto;padding:12px}
+.card{background:white;border-radius:15px;padding:14px;margin-bottom:12px;box-shadow:0 1px 4px #0001}
+button{border:0;border-radius:11px;padding:12px;font-size:15px;font-weight:700;background:#e5e7eb}
+.primary{background:#2563eb;color:white}
+.danger{background:#fee2e2;color:#b91c1c}
+input{width:100%;padding:12px;border:1px solid #ccc;border-radius:9px;font-size:16px;margin:5px 0}
+.players{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:10px}
+.player{min-height:66px;border:2px solid #d1d5db;background:#f9fafb}
+.player.selected{background:#dbeafe;border-color:#2563eb;color:#1d4ed8}
+.count{display:block;font-size:11px;color:#6b7280;margin-top:4px}
+.status{padding:11px;border-radius:10px;background:#f3f4f6;margin:10px 0;font-size:14px}
+.good{background:#dcfce7;color:#166534}
+.blue{background:#eff6ff;border:1px solid #bfdbfe}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.grid .full{grid-column:1/-1}
+table{width:100%;border-collapse:collapse;font-size:14px}
+td,th{padding:8px 4px;border-bottom:1px solid #eee}
+th{font-size:11px;color:#6b7280;text-transform:uppercase;text-align:left}
+.center{text-align:center}
+.shift{padding:7px 0;border-bottom:1px solid #eee;font-size:12px}
+.small{font-size:12px;color:#6b7280}
+.hidden{display:none}
+</style>
+</head>
+
+<body>
+<header>
+<h1>🏀 CoachDad Rotation Tracker</h1>
+<div class="small" style="color:#d1d5db">9 players • 8 shifts • playing-time balance</div>
+</header>
+
+<main>
+
+<div id="setup" class="card">
+<b>Roster</b>
+<div class="small">Enter your 9 players.</div>
+<div id="names"></div>
+<div class="grid">
+<button onclick="saveRoster()">Save roster</button>
+<button class="primary" onclick="newGame()">Start new game</button>
+</div>
+</div>
+
+<div id="game" class="hidden">
+
+<div class="card">
+<b id="quarter" style="font-size:21px"></b>
+<div id="shiftNumber" class="small"></div>
+
+<div id="status" class="status">
+Select the 5 players currently on the court.
+</div>
+
+<div class="card blue">
+<b>Sub suggestion</b>
+<div id="suggestion" style="margin-top:5px;font-size:13px"></div>
+</div>
+
+<b>Players currently on the court</b>
+<div id="players" class="players"></div>
+
+<div class="grid" style="margin-top:10px">
+<button class="primary full" id="record" onclick="record()">Record this shift</button>
+<button onclick="clearSelection()">Clear</button>
+<button onclick="undo()">Undo</button>
+</div>
+</div>
+
+<div class="card">
+<b>Playing-time balance</b>
+<table>
+<thead>
+<tr><th>Player</th><th class="center">Game</th><th class="center">Season</th></tr>
+</thead>
+<tbody id="balance"></tbody>
+</table>
+</div>
+
+<div class="card">
+<b>Shift history</b>
+<div id="history"></div>
+</div>
+
+<div class="card">
+<button class="danger" style="width:100%" onclick="endGame()">End & Save Game</button>
+</div>
+
+</div>
+
+<div class="card">
+<details>
+<summary><b>How this works</b></summary>
+<p class="small">
+Each quarter has two shifts. At the halfway point, select the five players who are now on the court and record the shift.
+</p>
+<p class="small">
+If nobody subs, record the same five again. The app tracks shifts rather than exact minutes.
+</p>
+</details>
+</div>
+
+</main>
+
+<script>
+const KEY="coachdadBasketballTracker";
+let data={
+ roster:Array(9).fill(""),
+ season:Array(9).fill(0),
+ games:[],
+ current:null
+};
+
+try{
+ let saved=JSON.parse(localStorage.getItem(KEY));
+ if(saved)data={...data,...saved};
+}catch(e){}
+
+function save(){
+ localStorage.setItem(KEY,JSON.stringify(data));
+}
+
+function renderNames(){
+ let box=document.getElementById("names");
+ box.innerHTML="";
+ data.roster.forEach((n,i)=>{
+   box.innerHTML+=`<input id="n${i}" value="${esc(n)}" placeholder="Player ${i+1}">`;
+ });
+}
+
+function esc(x){
+ return String(x||"")
+ .replace(/&/g,"&amp;")
+ .replace(/</g,"&lt;")
+ .replace(/>/g,"&gt;")
+ .replace(/"/g,"&quot;");
+}
+
+function saveRoster(){
+ for(let i=0;i<9;i++){
+   data.roster[i]=document.getElementById("n"+i).value.trim();
+ }
+ save();
+ alert("Roster saved!");
+}
+
+function newGame(){
+ saveRoster();
+ data.current={
+   shift:0,
+   lineups:[],
+   selected:[]
+ };
+ document.getElementById("setup").classList.add("hidden");
+ document.getElementById("game").classList.remove("hidden");
+ render();
+}
+
+function name(i){
+ return data.roster[i]||"Player "+(i+1);
+}
+
+function gameCount(i){
+ if(!data.current)return 0;
+ return data.current.lineups.filter(x=>x.includes(i)).length;
+}
+
+function label(s){
+ let q=Math.floor(s/2)+1;
+ let h=s%2+1;
+ let qs=["","1st","2nd","3rd","4th"];
+ return qs[q]+" Quarter • Shift "+h;
+}
+
+function render(){
+ let c=data.current;
+
+ document.getElementById("quarter").textContent=
+   c.shift<8?label(c.shift):"Game Complete";
+
+ document.getElementById("shiftNumber").textContent=
+   c.shift<8?"Shift "+(c.shift+1)+" of 8":"All 8 shifts recorded";
+
+ let box=document.getElementById("players");
+ box.innerHTML="";
+
+ for(let i=0;i<9;i++){
+   let b=document.createElement("button");
+   b.className="player"+(c.selected.includes(i)?" selected":"");
+   b.innerHTML="<b>"+esc(name(i))+"</b>"+
+     '<span class="count">'+gameCount(i)+" game • "+(data.season[i]||0)+" season</span>";
+   b.onclick=()=>toggle(i);
+   box.appendChild(b);
+ }
+
+ document.getElementById("record").disabled=
+   c.selected.length!==5||c.shift>=8;
+
+ document.getElementById("record").textContent=
+   c.shift===7?"Record final shift":"Record this shift";
+
+ updateStatus();
+ updateBalance();
+ updateHistory();
+ updateSuggestion();
+}
+
+function toggle(i){
+ let a=data.current.selected;
+
+ if(a.includes(i)){
+   data.current.selected=a.filter(x=>x!==i);
+ }else if(a.length<5){
+   a.push(i);
+ }
+
+ render();
+}
+
+function clearSelection(){
+ data.current.selected=[];
+ render();
+}
+
+function updateStatus(){
+ let c=data.current;
+ let s=document.getElementById("status");
+
+ if(c.selected.length<5){
+   s.className="status";
+   s.textContent="Select "+(5-c.selected.length)+" more player"+
+     (5-c.selected.length===1?"":"s")+" for this shift.";
+ }else{
+   s.className="status good";
+   s.textContent="Five players selected. Ready to record.";
+ }
+}
+
+function updateSuggestion(){
+ let c=data.current;
+ let box=document.getElementById("suggestion");
+
+ if(c.shift===0){
+   box.textContent=
+    "Opening shift. Use the season totals below as another reference when choosing your starters.";
+   return;
+ }
+
+ if(c.shift>=8){
+   box.textContent="All 8 shifts are recorded.";
+   return;
+ }
+
+ let previous=c.lineups[c.lineups.length-1];
+ let on=new Set(previous);
+
+ let off=[];
+ let onPlayers=[];
+
+ for(let i=0;i<9;i++){
+   if(on.has(i))onPlayers.push(i);
+   else off.push(i);
+ }
+
+ let min=Math.min(...off.map(i=>gameCount(i)));
+ let candidates=off.filter(i=>gameCount(i)===min);
+
+ let max=Math.max(...onPlayers.map(i=>gameCount(i)));
+ let possibleOut=onPlayers.filter(i=>gameCount(i)===max);
+
+ box.innerHTML=
+   "<b>Consider bringing in:</b> "+
+   candidates.map(i=>esc(name(i))+" ("+gameCount(i)+")").join(", ")+
+   "<br><span class='small'>"+
+   "Currently on the floor with the most shifts: "+
+   possibleOut.map(i=>esc(name(i))+" ("+gameCount(i)+")").join(", ")+
+   "</span>";
+}
+
+function record(){
+ let c=data.current;
+
+ if(c.selected.length!==5)return;
+
+ c.lineups.push([...c.selected]);
+ c.shift++;
+ c.selected=[];
+
+ save();
+ render();
+
+ if(c.shift===8){
+   alert("All 8 shifts are recorded. Review the totals, then tap End & Save Game.");
+ }
+}
+
+function undo(){
+ let c=data.current;
+
+ if(!c.lineups.length)return;
+
+ c.lineups.pop();
+ c.shift--;
+
+ c.selected=c.lineups.length?
+   [...c.lineups[c.lineups.length-1]]:[];
+
+ save();
+ render();
+}
+
+function updateBalance(){
+ let rows=[];
+
+ for(let i=0;i<9;i++){
+   rows.push({
+     i:i,
+     g:gameCount(i),
+     s:data.season[i]||0
+   });
+ }
+
+ rows.sort((a,b)=>a.g-b.g||a.s-b.s);
+
+ document.getElementById("balance").innerHTML=
+   rows.map(x=>
+     "<tr><td><b>"+esc(name(x.i))+
+     "</b></td><td class='center'>"+x.g+
+     "</td><td class='center'>"+x.s+
+     "</td></tr>"
+   ).join("");
+}
+
+function updateHistory(){
+ let c=data.current;
+ let box=document.getElementById("history");
+
+ if(!c.lineups.length){
+   box.innerHTML="<span class='small'>No shifts recorded yet.</span>";
+   return;
+ }
+
+ box.innerHTML=c.lineups.map((players,i)=>
+   '<div class="shift"><b>'+label(i)+'</b><br>'+
+   players.map(x=>esc(name(x))).join(" • ")+
+   "</div>"
+ ).join("");
+}
+
+function endGame(){
+ let c=data.current;
+
+ if(!c.lineups.length)return;
+
+ if(c.shift<8){
+   if(!confirm(
+     "Only "+c.shift+" of 8 shifts are recorded. Save this game anyway?"
+   ))return;
+ }
+
+ c.lineups.forEach(players=>{
+   players.forEach(i=>{
+     data.season[i]=(data.season[i]||0)+1;
+   });
+ });
+
+ data.games.unshift({
+   date:new Date().toLocaleString(),
+   lineups:c.lineups
+ });
+
+ data.games=data.games.slice(0,50);
+ data.current=null;
+
+ save();
+
+ document.getElementById("game").classList.add("hidden");
+ document.getElementById("setup").classList.remove("hidden");
+
+ alert("Game saved! Season totals have been updated.");
+}
+
+renderNames();
+</script>
+
+</body>
+</html>
